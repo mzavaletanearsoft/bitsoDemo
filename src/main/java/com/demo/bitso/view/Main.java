@@ -1,5 +1,6 @@
 package com.demo.bitso.view;
 
+import com.demo.bitso.controller.Controller;
 import javafx.application.Application;
 import javafx.fxml.FXMLLoader;
 import javafx.scene.Parent;
@@ -16,6 +17,16 @@ public class Main extends Application {
         primaryStage.show();
     }
 
+    @Override
+    public void stop() throws Exception {
+        FXMLLoader fxmlLoader = new FXMLLoader();
+        fxmlLoader.load(getClass().getClassLoader().getResource("bitsoTemplate.fxml").openStream());
+        Controller controller = fxmlLoader.getController();
+
+        controller.killScheduledTasks();
+
+        super.stop();
+    }
 
     public static void main(String[] args) {
         System.setProperty("MAX_DISPLAYABLE_BIDS_AND_ASKS", "10");

@@ -1,19 +1,17 @@
 package com.demo.bitso.transport;
 
 import com.demo.bitso.model.DiffOrderMessage;
+import com.demo.bitso.model.Operation;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
-import javafx.application.Platform;
-import javafx.collections.transformation.SortedList;
 import javafx.scene.control.ListView;
 
 import javax.websocket.*;
 import java.io.IOException;
-import java.util.Comparator;
-import java.util.List;
-import java.util.stream.Collectors;
+import java.util.Map;
+import java.util.concurrent.ConcurrentLinkedQueue;
 
 @ClientEndpoint
 public class BitsoWebSocketClientEndpoint {
@@ -21,10 +19,12 @@ public class BitsoWebSocketClientEndpoint {
     private Session userSession = null;
     private ListView<DiffOrderMessage> bidsListView;
     private ListView<DiffOrderMessage> asksListView;
+    private Map<Enum<Operation>, ConcurrentLinkedQueue<DiffOrderMessage>> diffOrdersMap;
 
-    public BitsoWebSocketClientEndpoint(ListView<DiffOrderMessage> bidsListView, ListView<DiffOrderMessage> asksListView) {
+    public BitsoWebSocketClientEndpoint(ListView<DiffOrderMessage> bidsListView, ListView<DiffOrderMessage> asksListView, Map<Enum<Operation>, ConcurrentLinkedQueue<DiffOrderMessage>> diffOrdersMap) {
         this.bidsListView = bidsListView;
         this.asksListView = asksListView;
+        this.diffOrdersMap = diffOrdersMap;
     }
 
     @OnOpen
@@ -64,34 +64,15 @@ public class BitsoWebSocketClientEndpoint {
             if (isValidDiffOrdersMessage(messageNode)) {
                 DiffOrderMessage diffOrderMessage = getDiffOrderMessage(messageNode);
                 if (isBuyMessage(messageNode)) {
-                    Platform.runLater(processListView(asksListView, diffOrderMessage, getDiffOrderMessageComparator()));
+                    diffOrdersMap.computeIfAbsent(Operation.ASK, k -> new ConcurrentLinkedQueue<>()).add(diffOrderMessage);
                 } else {
-                    Platform.runLater(processListView(bidsListView, diffOrderMessage, getDiffOrderMessageComparator().reversed()));
+                    diffOrdersMap.computeIfAbsent(Operation.BID, k -> new ConcurrentLinkedQueue<>()).add(diffOrderMessage);
                 }
             }
 
         } catch (IOException e) {
             e.printStackTrace();
         }
-    }
-
-    private Runnable processListView(ListView<DiffOrderMessage> listView, DiffOrderMessage diffOrderMessage, Comparator<DiffOrderMessage> diffOrderMessageComparator) {
-        return () -> {
-            listView.getItems().add(diffOrderMessage);
-
-            SortedList<DiffOrderMessage> sorted = listView.getItems()
-                    .sorted(diffOrderMessageComparator);
-
-            List<DiffOrderMessage> collect = sorted.stream()
-                    .limit(Long.valueOf(System.getProperty("MAX_DISPLAYABLE_BIDS_AND_ASKS")))
-                    .collect(Collectors.toList());
-
-            listView.getItems().setAll(collect);
-        };
-    }
-
-    private Comparator<DiffOrderMessage> getDiffOrderMessageComparator() {
-        return (a, b) -> a.getFirstPayload().getRate() > b.getFirstPayload().getRate() ? 1 : 0;
     }
 
     private DiffOrderMessage getDiffOrderMessage(JsonNode messageNode) {
