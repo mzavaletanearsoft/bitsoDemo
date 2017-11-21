@@ -14,7 +14,10 @@ import javafx.scene.control.ListView;
 import javax.websocket.ContainerProvider;
 import javax.websocket.WebSocketContainer;
 import java.io.IOException;
+import java.io.InputStream;
+import java.net.HttpURLConnection;
 import java.net.URI;
+import java.net.URL;
 import java.util.*;
 import java.util.concurrent.*;
 import java.util.stream.Collectors;
@@ -24,7 +27,8 @@ public class Controller {
     private static final ScheduledExecutorService scheduledExecutorService = Executors.newSingleThreadScheduledExecutor();
 
     private Map<Enum<Operation>, ConcurrentLinkedQueue<DiffOrderMessage>> diffOrdersMap = new ConcurrentHashMap<>();
-    private ConcurrentLinkedQueue<String> diffOrders = new ConcurrentLinkedQueue();
+    private ConcurrentLinkedQueue<String> diffOrders = new ConcurrentLinkedQueue<>();
+    private Integer restBookSequence = 0;
 
     @FXML
     public ListView<DiffOrderMessage> bidsListView;
@@ -39,6 +43,10 @@ public class Controller {
             BitsoWebSocketClientEndpoint bitsoWebSocketClientEndpoint = new BitsoWebSocketClientEndpoint(diffOrders);
             container.connectToServer(bitsoWebSocketClientEndpoint, new URI("wss://ws.bitso.com"));
 
+            final CountDownLatch latch = new CountDownLatch(1);
+            scheduledExecutorService.schedule(createOrderBookTask(latch), 0, TimeUnit.MILLISECONDS);
+
+            latch.await();
             scheduledExecutorService.scheduleAtFixedRate(createDiffOrdersScheduler(Operation.BID, bidsListView, getDiffOrderMessageComparator().reversed()), 2000, 100, TimeUnit.MILLISECONDS);
             scheduledExecutorService.scheduleAtFixedRate(createDiffOrdersScheduler(Operation.ASK, asksListView, getDiffOrderMessageComparator()), 2000, 100, TimeUnit.MILLISECONDS);
             scheduledExecutorService.scheduleAtFixedRate(createDiffOrdersMappingScheduler(), 2000, 100, TimeUnit.MILLISECONDS);
@@ -47,6 +55,32 @@ public class Controller {
         } catch (Exception e) {
             throw new RuntimeException(e);
         }
+    }
+
+    private Runnable createOrderBookTask(CountDownLatch latch) {
+        return () -> {
+            try {
+                String url = "https://api.bitso.com/v3/order_book/?book=btc_mxn";
+
+                URL obj = new URL(url);
+                HttpURLConnection con = (HttpURLConnection) obj.openConnection();
+                con.setRequestMethod("GET");
+                con.setRequestProperty("User-Agent", "Mozilla/5.0");
+
+                InputStream inputStream = con.getInputStream();
+
+                ObjectMapper mapper = new ObjectMapper();
+                JsonNode responseNode = mapper.readTree(inputStream);
+
+                Integer sequence = responseNode.path("payload").path("sequence").asInt();
+
+                restBookSequence = sequence;
+
+                latch.countDown();
+            } catch (IOException e) {
+                e.printStackTrace();
+            }
+        };
     }
 
     private Runnable createDiffOrdersMappingScheduler() {
@@ -63,7 +97,11 @@ public class Controller {
             ConcurrentLinkedQueue<DiffOrderMessage> bidDiffOrderMessages = diffOrdersMap.getOrDefault(operation, new ConcurrentLinkedQueue<>());
             DiffOrderMessage diffOrderMessage = bidDiffOrderMessages.poll();
             if (diffOrderMessage != null) {
-                Platform.runLater(processListView(listView, diffOrderMessage, orderMessageComparator));
+                if (diffOrderMessage.getSequence() > restBookSequence) {
+                    Platform.runLater(processListView(listView, diffOrderMessage, orderMessageComparator));
+                } else {
+                    System.out.println("DISCARDING: " + diffOrderMessage);
+                }
             }
         };
     }
@@ -138,7 +176,7 @@ public class Controller {
         return false;
     }
 
-    public static JsonNode parseJsonMessage(String inputStream) throws IOException {
+    private static JsonNode parseJsonMessage(String inputStream) throws IOException {
         return new ObjectMapper().readTree(inputStream);
     }
 
