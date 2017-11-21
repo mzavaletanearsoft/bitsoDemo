@@ -1,21 +1,20 @@
 <?xml version="1.0" encoding="UTF-8"?>
 
 <?import javafx.scene.control.ListView?>
-<?import javafx.scene.layout.HBox?>
-<?import javafx.scene.layout.VBox?>
+<?import javafx.scene.layout.ColumnConstraints?>
+<?import javafx.scene.layout.GridPane?>
+<?import javafx.scene.layout.RowConstraints?>
 
-
-<HBox alignment="center" prefHeight="600.0" prefWidth="600.0" xmlns="http://javafx.com/javafx/8.0.121" xmlns:fx="http://javafx.com/fxml/1" fx:controller="com.demo.bitso.controller.Controller">
-   <children>
-      <VBox>
-         <children>
-            <ListView fx:id="bidsListView" />
-         </children>
-      </VBox>
-      <VBox>
-         <children>
-            <ListView fx:id="asksListView" />
-         </children>
-      </VBox>
-   </children>
-</HBox>
+<GridPane prefHeight="600.0" prefWidth="800.0" xmlns="http://javafx.com/javafx/8.0.121" xmlns:fx="http://javafx.com/fxml/1" fx:controller="com.demo.bitso.controller.Controller">
+    <columnConstraints>
+        <ColumnConstraints hgrow="SOMETIMES" minWidth="10.0" />
+        <ColumnConstraints hgrow="SOMETIMES" minWidth="10.0" />
+    </columnConstraints>
+    <rowConstraints>
+        <RowConstraints minHeight="10.0" vgrow="SOMETIMES" />
+    </rowConstraints>
+    <children>
+        <ListView id="bidsListView" fx:id="bidsListView" GridPane.columnIndex="0" />
+        <ListView id="asksListview" fx:id="asksListView" GridPane.columnIndex="1" />
+    </children>
+</GridPane>
