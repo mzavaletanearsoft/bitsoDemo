@@ -6,7 +6,7 @@ public class DiffOrderMessage implements Cloneable {
     private String type;
     private String book;
     private Integer sequence;
-    private List<Payload> payload;
+    private List<DiffOrderPayload> payload;
 
     public String getType() {
         return type;
@@ -32,25 +32,25 @@ public class DiffOrderMessage implements Cloneable {
         this.sequence = sequence;
     }
 
-    public List<Payload> getPayload() {
+    public List<DiffOrderPayload> getPayload() {
         return payload;
     }
 
-    public void setPayload(List<Payload> payload) {
+    public void setPayload(List<DiffOrderPayload> payload) {
         this.payload = payload;
     }
 
     @Override
     public String toString() {
-        Payload payload = getFirstPayload();
+        DiffOrderPayload diffOrderPayload = getFirstPayload();
 
         String book = formatValue(getBook());
         String operation = formatValue(isBuy() ? "BUY" : "SELL");
-        String rate = formatValue(payload.getR());
-        String amount = formatValue(payload.getA());
-        String value = formatValue(payload.getV());
-        String operationId = formatValue(payload.getO());
-        String status = formatValue(payload.getS());
+        String rate = formatValue(diffOrderPayload.getR());
+        String amount = formatValue(diffOrderPayload.getA());
+        String value = formatValue(diffOrderPayload.getV());
+        String operationId = formatValue(diffOrderPayload.getO());
+        String status = formatValue(diffOrderPayload.getS());
         Integer sequence = getSequence();
 
         String baseMessage = "[%s - %s] [RATE: %s] [AMOUNT: %s] [VALUE: %s] [ID: %s] [STATUS: %s] [SEQ: %s]";
@@ -61,7 +61,7 @@ public class DiffOrderMessage implements Cloneable {
         return value == null ? "-" : value;
     }
 
-    public Payload getFirstPayload() {
+    public DiffOrderPayload getFirstPayload() {
         return getPayload().get(0);
     }
 

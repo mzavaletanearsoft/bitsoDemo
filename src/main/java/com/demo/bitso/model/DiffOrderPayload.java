@@ -1,6 +1,6 @@
 package com.demo.bitso.model;
 
-public class Payload {
+public class DiffOrderPayload {
     private String o;
     private String d;
     private String r;

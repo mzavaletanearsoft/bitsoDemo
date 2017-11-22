@@ -1,8 +1,6 @@
 package com.demo.bitso.controller;
 
-import com.demo.bitso.model.DiffOrderMessage;
-import com.demo.bitso.model.Operation;
-import com.demo.bitso.model.Payload;
+import com.demo.bitso.model.*;
 import com.demo.bitso.transport.BitsoWebSocketClientEndpoint;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -28,7 +26,8 @@ public class Controller {
 
     private Map<Enum<Operation>, ConcurrentLinkedQueue<DiffOrderMessage>> diffOrdersMap = new ConcurrentHashMap<>();
     private ConcurrentLinkedQueue<String> diffOrders = new ConcurrentLinkedQueue<>();
-    private Integer restBookSequence = 0;
+    private Integer restBookSequence;
+    private Integer MAX_DISPLAYABLE_BIDS_AND_ASKS;
 
     @FXML
     public ListView<DiffOrderMessage> bidsListView;
@@ -37,14 +36,20 @@ public class Controller {
     public ListView<DiffOrderMessage> asksListView;
 
     @FXML
+    public ListView<TradesPayload> lastTradesListView;
+
+    @FXML
     public void initialize() {
         try {
+            MAX_DISPLAYABLE_BIDS_AND_ASKS = Integer.valueOf(System.getProperty("MAX_DISPLAYABLE_BIDS_AND_ASKS"));
+
             WebSocketContainer container = ContainerProvider.getWebSocketContainer();
             BitsoWebSocketClientEndpoint bitsoWebSocketClientEndpoint = new BitsoWebSocketClientEndpoint(diffOrders);
             container.connectToServer(bitsoWebSocketClientEndpoint, new URI("wss://ws.bitso.com"));
 
             final CountDownLatch latch = new CountDownLatch(1);
             scheduledExecutorService.schedule(createOrderBookTask(latch), 0, TimeUnit.MILLISECONDS);
+            scheduledExecutorService.schedule(createTradesTask(), 0, TimeUnit.MILLISECONDS);
 
             latch.await();
             scheduledExecutorService.scheduleAtFixedRate(createDiffOrdersScheduler(Operation.BID, bidsListView, getDiffOrderMessageComparator().reversed()), 2000, 100, TimeUnit.MILLISECONDS);
@@ -61,26 +66,46 @@ public class Controller {
         return () -> {
             try {
                 String url = "https://api.bitso.com/v3/order_book/?book=btc_mxn";
-
-                URL obj = new URL(url);
-                HttpURLConnection con = (HttpURLConnection) obj.openConnection();
-                con.setRequestMethod("GET");
-                con.setRequestProperty("User-Agent", "Mozilla/5.0");
-
-                InputStream inputStream = con.getInputStream();
+                InputStream inputStream = buildHttpURLConnection(url).getInputStream();
 
                 ObjectMapper mapper = new ObjectMapper();
                 JsonNode responseNode = mapper.readTree(inputStream);
 
-                Integer sequence = responseNode.path("payload").path("sequence").asInt();
-
-                restBookSequence = sequence;
+                restBookSequence = responseNode.path("payload").path("sequence").asInt();
 
                 latch.countDown();
             } catch (IOException e) {
                 e.printStackTrace();
             }
         };
+    }
+
+    private Runnable createTradesTask() {
+        return () -> {
+            try {
+                String url = "https://api.bitso.com/v3/trades/?book=btc_mxn";
+                InputStream inputStream = buildHttpURLConnection(url).getInputStream();
+
+                ObjectMapper mapper = new ObjectMapper();
+                JsonNode responseNode = mapper.readTree(inputStream);
+                TradesMessage tradesMessage = mapper.convertValue(responseNode, TradesMessage.class);
+
+                Platform.runLater(() -> {
+                    lastTradesListView.getItems().addAll(tradesMessage.getPayload().subList(0, MAX_DISPLAYABLE_BIDS_AND_ASKS));
+                });
+
+
+            } catch (IOException e) {
+                e.printStackTrace();
+            }
+        };
+    }
+
+    private HttpURLConnection buildHttpURLConnection(String url) throws IOException {
+        HttpURLConnection con = (HttpURLConnection) new URL(url).openConnection();
+        con.setRequestMethod("GET");
+        con.setRequestProperty("User-Agent", "Mozilla/5.0");
+        return con;
     }
 
     private Runnable createDiffOrdersMappingScheduler() {
@@ -110,14 +135,14 @@ public class Controller {
         return () -> {
 
             Collection<DiffOrderMessage> diffOrderMessages = new ArrayList<>();
-            List<Payload> payload = diffOrderMessage.getPayload();
+            List<DiffOrderPayload> diffOrderPayload = diffOrderMessage.getPayload();
 
-            if (payload.size() > 1) {
-                payload.forEach(p -> {
+            if (diffOrderPayload.size() > 1) {
+                diffOrderPayload.forEach(p -> {
                     DiffOrderMessage message = DiffOrderMessage.clone(diffOrderMessage);
-                    ArrayList<Payload> payloads = new ArrayList<>();
-                    payloads.add(p);
-                    message.setPayload(payloads);
+                    ArrayList<DiffOrderPayload> diffOrderPayloads = new ArrayList<>();
+                    diffOrderPayloads.add(p);
+                    message.setPayload(diffOrderPayloads);
                     diffOrderMessages.add(message);
                 });
 
@@ -130,7 +155,7 @@ public class Controller {
                     .sorted(diffOrderMessageComparator);
 
             List<DiffOrderMessage> collect = sorted.stream()
-                    .limit(Long.valueOf(System.getProperty("MAX_DISPLAYABLE_BIDS_AND_ASKS")))
+                    .limit(MAX_DISPLAYABLE_BIDS_AND_ASKS)
                     .collect(Collectors.toList());
 
             listView.getItems().setAll(collect);
