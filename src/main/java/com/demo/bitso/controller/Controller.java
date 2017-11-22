@@ -83,7 +83,7 @@ public class Controller {
     private Runnable createTradesTask() {
         return () -> {
             try {
-                String url = "https://api.bitso.com/v3/trades/?book=btc_mxn";
+                String url = "https://api.bitso.com/v3/trades/?book=btc_mxn&limit=" + MAX_DISPLAYABLE_BIDS_AND_ASKS;
                 InputStream inputStream = buildHttpURLConnection(url).getInputStream();
 
                 ObjectMapper mapper = new ObjectMapper();
