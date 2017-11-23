@@ -28,8 +28,8 @@ public class Controller {
 
     private Map<Enum<Operation>, ConcurrentLinkedQueue<DiffOrderMessage>> diffOrdersMap = new ConcurrentHashMap<>();
     private ConcurrentLinkedQueue<String> diffOrders = new ConcurrentLinkedQueue<>();
-    private ConcurrentSkipListSet<TradesPayload> lastTrades = new ConcurrentSkipListSet<>();
-    private AtomicInteger lasteTradeId = new AtomicInteger();
+    private ConcurrentLinkedQueue<TradesPayload> mockBuyAndSell = new ConcurrentLinkedQueue<>();
+    private AtomicInteger lastTradeId = new AtomicInteger();
 
     private AtomicInteger uptickCount = new AtomicInteger(0);
     private AtomicInteger downtickCount = new AtomicInteger(0);
@@ -103,7 +103,7 @@ public class Controller {
 
                 addAndAnalyzeLastTrades(trades);
 
-                Platform.runLater(() -> addItemsToTradeListView(trades));
+                Platform.runLater(() -> lastTradesListView.getItems().setAll(trades.subList(0, MAX_DISPLAYABLE_BIDS_AND_ASKS)));
 
 
             } catch (IOException e) {
@@ -112,22 +112,20 @@ public class Controller {
         };
     }
 
-    private boolean addItemsToTradeListView(List<TradesPayload> trades) {
-        return lastTradesListView.getItems().setAll(trades.subList(0, MAX_DISPLAYABLE_BIDS_AND_ASKS));
-    }
-
     private void addAndAnalyzeLastTrades(List<TradesPayload> trades) {
+        Deque<TradesPayload> lastTrades = new ArrayDeque<>();
+
         System.out.println();
         trades.forEach(lastTrades::add);
 
         BigDecimal lastPrice = BigDecimal.valueOf(0);
 
         Integer currentTransactionId;
-        TradesPayload currentTrade = lastTrades.pollFirst();
-        TradesPayload lastTrade = lastTrades.last();
+        TradesPayload currentTrade = lastTrades.poll();
+        TradesPayload lastTrade = lastTrades.pollLast();
         while (currentTrade != null) {
             currentTransactionId = currentTrade.getTid();
-            if ((currentTransactionId - lasteTradeId.intValue()) > 0) {
+            if ((currentTransactionId - lastTradeId.intValue()) > 0) {
 
                 BigDecimal price = BigDecimal.valueOf(Double.parseDouble(currentTrade.getPrice()));
                 switch (price.compareTo(lastPrice)) {
@@ -151,9 +149,9 @@ public class Controller {
                 }
 
                 lastPrice = price;
-                lasteTradeId.set(currentTransactionId);
+                lastTradeId.set(currentTransactionId);
             } else {
-                System.out.println("SKIP: " + currentTransactionId + " - LAST_TRADE - " + lasteTradeId.intValue());
+                System.out.println("SKIP: " + currentTransactionId + " - LAST_TRADE - " + lastTradeId.intValue());
             }
 
             currentTrade = lastTrades.pollFirst();
@@ -163,6 +161,9 @@ public class Controller {
         if (firstTrades) {
             buyOrSell(lastTrade);
         }
+
+        trades.addAll(mockBuyAndSell);
+        trades.sort(Comparator.comparingInt(TradesPayload::getTid));
 
     }
 
@@ -187,11 +188,13 @@ public class Controller {
         executeTransaction(tradesPayload, "YOU SELL");
     }
 
-    private void executeTransaction(TradesPayload tradesPayload, String you_sell) {
-        tradesPayload.setAmount("1");
-        tradesPayload.setMaker_side(you_sell);
-        System.out.println(tradesPayload);
-        addItemsToTradeListView(Collections.singletonList(tradesPayload));
+    private void executeTransaction(TradesPayload tradesPayload, String operation) {
+        TradesPayload newTrade = TradesPayload.clone(tradesPayload);
+        newTrade.setAmount("1");
+        newTrade.setMaker_side(operation);
+        System.out.println(newTrade);
+
+        mockBuyAndSell.offer(newTrade);
     }
 
     private TradesMessage getTradesMessage() throws IOException {

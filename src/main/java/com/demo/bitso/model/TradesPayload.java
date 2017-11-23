@@ -1,6 +1,6 @@
 package com.demo.bitso.model;
 
-public class TradesPayload implements Comparable {
+public class TradesPayload implements Cloneable {
     private String book;
     private String created_at;
     private String amount;
@@ -62,8 +62,23 @@ public class TradesPayload implements Comparable {
         return String.format(baseMessage, getBook(), getMaker_side(), getAmount(), getPrice(), getTid());
     }
 
-    @Override
-    public int compareTo(Object o) {
-        return getTid() - ((TradesPayload) o).getTid();
+//    @Override
+//    public int compareTo(Object o) {
+//        return getTid() - ((TradesPayload) o).getTid();
+//    }
+
+    protected Object clone() throws CloneNotSupportedException {
+        return super.clone();
+    }
+
+    public static TradesPayload clone(TradesPayload tradesPayload) {
+        try {
+            return (TradesPayload) tradesPayload.clone();
+        } catch (CloneNotSupportedException e) {
+            e.printStackTrace();
+        }
+
+        return new TradesPayload();
+
     }
 }
