@@ -62,11 +62,6 @@ public class TradesPayload implements Cloneable {
         return String.format(baseMessage, getBook(), getMaker_side(), getAmount(), getPrice(), getTid());
     }
 
-//    @Override
-//    public int compareTo(Object o) {
-//        return getTid() - ((TradesPayload) o).getTid();
-//    }
-
     protected Object clone() throws CloneNotSupportedException {
         return super.clone();
     }

@@ -8,6 +8,7 @@ import javafx.application.Platform;
 import javafx.collections.transformation.SortedList;
 import javafx.fxml.FXML;
 import javafx.scene.control.ListView;
+import javafx.scene.control.TextArea;
 
 import javax.websocket.ContainerProvider;
 import javax.websocket.WebSocketContainer;
@@ -17,6 +18,7 @@ import java.math.BigDecimal;
 import java.net.HttpURLConnection;
 import java.net.URI;
 import java.net.URL;
+import java.text.NumberFormat;
 import java.util.*;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -25,6 +27,12 @@ import java.util.stream.Collectors;
 public class Controller {
 
     private static final ScheduledExecutorService scheduledExecutorService = Executors.newSingleThreadScheduledExecutor();
+
+    public static final String COINS = "COINS";
+    public static final String LAST_PRICE = "LAST_PRICE";
+    public static final String MONEY = "MONEY";
+    public static final String STARTING_PRICE = "STARTING_PRICE";
+    public static final String STARTING_TOTAL = "STARTING_TOTAL";
 
     private Map<Enum<Operation>, ConcurrentLinkedQueue<DiffOrderMessage>> diffOrdersMap = new ConcurrentHashMap<>();
     private ConcurrentLinkedQueue<String> diffOrders = new ConcurrentLinkedQueue<>();
@@ -40,6 +48,11 @@ public class Controller {
     private Integer CONSECUTIVE_DOWNTICKS;
 
     private boolean firstTrades = true;
+
+    private ConcurrentHashMap<String, BigDecimal> infoMap = new ConcurrentHashMap<>();
+
+    @FXML
+    public TextArea infoTextArea;
 
     @FXML
     public ListView<DiffOrderMessage> bidsListView;
@@ -57,13 +70,16 @@ public class Controller {
             CONSECUTIVE_UPTICKS = Integer.valueOf(System.getProperty("CONSECUTIVE_UPTICKS"));
             CONSECUTIVE_DOWNTICKS = Integer.valueOf(System.getProperty("CONSECUTIVE_DOWNTICKS"));
 
+            infoMap.put(COINS, BigDecimal.valueOf(100));
+            infoMap.put(MONEY, BigDecimal.valueOf(0));
+
             WebSocketContainer container = ContainerProvider.getWebSocketContainer();
             BitsoWebSocketClientEndpoint bitsoWebSocketClientEndpoint = new BitsoWebSocketClientEndpoint(diffOrders);
             container.connectToServer(bitsoWebSocketClientEndpoint, new URI("wss://ws.bitso.com"));
 
             final CountDownLatch latch = new CountDownLatch(1);
             scheduledExecutorService.schedule(createOrderBookTask(latch), 0, TimeUnit.MILLISECONDS);
-            scheduledExecutorService.scheduleAtFixedRate(createTradesTask(), 0, 10, TimeUnit.SECONDS);
+            scheduledExecutorService.scheduleAtFixedRate(createTradesTask(), 0, 5, TimeUnit.SECONDS);
 
             latch.await();
             scheduledExecutorService.scheduleAtFixedRate(createDiffOrdersScheduler(Operation.BID, bidsListView, getDiffOrderMessageComparator().reversed()), 2000, 100, TimeUnit.MILLISECONDS);
@@ -105,6 +121,7 @@ public class Controller {
 
                 Platform.runLater(() -> lastTradesListView.getItems().setAll(trades.subList(0, MAX_DISPLAYABLE_BIDS_AND_ASKS)));
 
+                updateInfoTextArea();
 
             } catch (IOException e) {
                 e.printStackTrace();
@@ -115,14 +132,14 @@ public class Controller {
     private void addAndAnalyzeLastTrades(List<TradesPayload> trades) {
         Deque<TradesPayload> lastTrades = new ArrayDeque<>();
 
-        System.out.println();
+        System.out.println("addAndAnalyzeLastTrades");
         trades.forEach(lastTrades::add);
 
         BigDecimal lastPrice = BigDecimal.valueOf(0);
 
         Integer currentTransactionId;
-        TradesPayload currentTrade = lastTrades.poll();
-        TradesPayload lastTrade = lastTrades.pollLast();
+        TradesPayload currentTrade = lastTrades.pollLast();
+        TradesPayload lastTrade = lastTrades.pollFirst();
         while (currentTrade != null) {
             currentTransactionId = currentTrade.getTid();
             if ((currentTransactionId - lastTradeId.intValue()) > 0) {
@@ -132,13 +149,10 @@ public class Controller {
                     case -1:
                         downtickCount.incrementAndGet();
                         uptickCount.set(0);
-                        System.out.println("D -> " + downtickCount.get() + " - " + currentTransactionId);
                         break;
                     case 0:
-                        System.out.println("Z -> D=" + downtickCount.get() + " - U=" + uptickCount.get() + " - " + currentTransactionId);
                         break;
                     case 1:
-                        System.out.println("U -> " + uptickCount.get() + " - " + currentTransactionId);
                         uptickCount.incrementAndGet();
                         downtickCount.set(0);
                         break;
@@ -149,21 +163,49 @@ public class Controller {
                 }
 
                 lastPrice = price;
+                infoMap.put(LAST_PRICE, BigDecimal.valueOf(lastPrice.doubleValue()));
                 lastTradeId.set(currentTransactionId);
-            } else {
-                System.out.println("SKIP: " + currentTransactionId + " - LAST_TRADE - " + lastTradeId.intValue());
             }
 
-            currentTrade = lastTrades.pollFirst();
+            currentTrade = lastTrades.pollLast();
 
         }
 
         if (firstTrades) {
+            infoMap.putIfAbsent(STARTING_PRICE, BigDecimal.valueOf(lastPrice.doubleValue()));
             buyOrSell(lastTrade);
         }
 
         trades.addAll(mockBuyAndSell);
-        trades.sort(Comparator.comparingInt(TradesPayload::getTid));
+        trades.sort(Comparator.comparingInt(TradesPayload::getTid).reversed());
+
+    }
+
+    private void updateInfoTextArea() {
+        Platform.runLater(() -> {
+            StringJoiner sj = new StringJoiner("\n");
+            BigDecimal coins = infoMap.getOrDefault(COINS, BigDecimal.valueOf(0));
+            BigDecimal lastPrice = infoMap.getOrDefault(LAST_PRICE, BigDecimal.valueOf(0));
+            BigDecimal money = infoMap.getOrDefault(MONEY, BigDecimal.valueOf(0));
+            BigDecimal startingPrice = infoMap.getOrDefault(STARTING_PRICE, BigDecimal.valueOf(0));
+            BigDecimal total = coins.multiply(lastPrice).add(money);
+
+            infoMap.putIfAbsent(STARTING_TOTAL, coins.multiply(startingPrice));
+            BigDecimal startingTotal = infoMap.get(STARTING_TOTAL);
+
+            BigDecimal profit = total.subtract(startingTotal);
+
+            sj.add("Coins: " + coins)
+                    .add("Money: " + NumberFormat.getCurrencyInstance().format(money))
+                    .add("Total: " + NumberFormat.getCurrencyInstance().format(total))
+                    .add("Starting Total: " + NumberFormat.getCurrencyInstance().format(startingTotal))
+                    .add("Profit: " + NumberFormat.getCurrencyInstance().format(profit))
+                    .add("")
+                    .add("Upticks: " + uptickCount.get())
+                    .add("Downticks: " + downtickCount.get());
+
+            infoTextArea.setText(sj.toString());
+        });
 
     }
 
@@ -181,18 +223,20 @@ public class Controller {
 
     private void buyCoins(TradesPayload tradesPayload) {
         executeTransaction(tradesPayload, "YOU BUY");
-
+        infoMap.compute(COINS, (k, v) -> v.add(BigDecimal.valueOf(1)));
+        infoMap.compute(MONEY, (k, v) -> v.subtract(BigDecimal.valueOf(Double.valueOf(tradesPayload.getPrice()))));
     }
 
     private void sellCoins(TradesPayload tradesPayload) {
         executeTransaction(tradesPayload, "YOU SELL");
+        infoMap.compute(COINS, (k, v) -> v.subtract(BigDecimal.valueOf(1)));
+        infoMap.compute(MONEY, (k, v) -> v.add(BigDecimal.valueOf(Double.valueOf(tradesPayload.getPrice()))));
     }
 
     private void executeTransaction(TradesPayload tradesPayload, String operation) {
         TradesPayload newTrade = TradesPayload.clone(tradesPayload);
-        newTrade.setAmount("1");
+        newTrade.setAmount("1.00000000");
         newTrade.setMaker_side(operation);
-        System.out.println(newTrade);
 
         mockBuyAndSell.offer(newTrade);
     }
@@ -229,8 +273,6 @@ public class Controller {
             if (diffOrderMessage != null) {
                 if (diffOrderMessage.getSequence() > restBookSequence) {
                     Platform.runLater(processListView(listView, diffOrderMessage, orderMessageComparator));
-                } else {
-                    System.out.println("DISCARDING: " + diffOrderMessage);
                 }
             }
         };
@@ -293,7 +335,6 @@ public class Controller {
     }
 
     private DiffOrderMessage parseDiffOrderMessage(JsonNode messageNode) {
-//        System.out.println(messageNode.toString());
         ObjectMapper mapper = new ObjectMapper();
         return mapper.convertValue(messageNode, DiffOrderMessage.class);
     }

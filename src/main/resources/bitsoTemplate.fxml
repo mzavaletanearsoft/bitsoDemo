@@ -2,8 +2,10 @@
 
 <?import javafx.scene.control.Label?>
 <?import javafx.scene.control.ListView?>
+<?import javafx.scene.control.TextArea?>
 <?import javafx.scene.layout.ColumnConstraints?>
 <?import javafx.scene.layout.GridPane?>
+<?import javafx.scene.layout.HBox?>
 <?import javafx.scene.layout.RowConstraints?>
 
 <GridPane prefHeight="800.0" prefWidth="1000.0" xmlns="http://javafx.com/javafx/8.0.121" xmlns:fx="http://javafx.com/fxml/1" fx:controller="com.demo.bitso.controller.Controller">
@@ -24,6 +26,11 @@
       <Label id="bidsLabel" text="BIDS" GridPane.halignment="CENTER" />
       <Label id="asksLabel" text="ASKS" GridPane.halignment="CENTER" GridPane.rowIndex="2" />
       <Label text="LAST TRADES" GridPane.halignment="CENTER" GridPane.rowIndex="4" />
-      <ListView fx:id="lastTradesListView" GridPane.rowIndex="5" />
+      <HBox GridPane.rowIndex="5">
+         <children>
+            <ListView fx:id="lastTradesListView" HBox.hgrow="ALWAYS" />
+            <TextArea fx:id="infoTextArea" editable="false" prefWidth="300.0" />
+         </children>
+      </HBox>
     </children>
 </GridPane>
