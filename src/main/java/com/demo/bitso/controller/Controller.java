@@ -13,11 +13,13 @@ import javax.websocket.ContainerProvider;
 import javax.websocket.WebSocketContainer;
 import java.io.IOException;
 import java.io.InputStream;
+import java.math.BigDecimal;
 import java.net.HttpURLConnection;
 import java.net.URI;
 import java.net.URL;
 import java.util.*;
 import java.util.concurrent.*;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Collectors;
 
 public class Controller {
@@ -26,8 +28,18 @@ public class Controller {
 
     private Map<Enum<Operation>, ConcurrentLinkedQueue<DiffOrderMessage>> diffOrdersMap = new ConcurrentHashMap<>();
     private ConcurrentLinkedQueue<String> diffOrders = new ConcurrentLinkedQueue<>();
+    private ConcurrentSkipListSet<TradesPayload> lastTrades = new ConcurrentSkipListSet<>();
+    private AtomicInteger lasteTradeId = new AtomicInteger();
+
+    private AtomicInteger uptickCount = new AtomicInteger(0);
+    private AtomicInteger downtickCount = new AtomicInteger(0);
+
     private Integer restBookSequence;
     private Integer MAX_DISPLAYABLE_BIDS_AND_ASKS;
+    private Integer CONSECUTIVE_UPTICKS;
+    private Integer CONSECUTIVE_DOWNTICKS;
+
+    private boolean firstTrades = true;
 
     @FXML
     public ListView<DiffOrderMessage> bidsListView;
@@ -42,6 +54,8 @@ public class Controller {
     public void initialize() {
         try {
             MAX_DISPLAYABLE_BIDS_AND_ASKS = Integer.valueOf(System.getProperty("MAX_DISPLAYABLE_BIDS_AND_ASKS"));
+            CONSECUTIVE_UPTICKS = Integer.valueOf(System.getProperty("CONSECUTIVE_UPTICKS"));
+            CONSECUTIVE_DOWNTICKS = Integer.valueOf(System.getProperty("CONSECUTIVE_DOWNTICKS"));
 
             WebSocketContainer container = ContainerProvider.getWebSocketContainer();
             BitsoWebSocketClientEndpoint bitsoWebSocketClientEndpoint = new BitsoWebSocketClientEndpoint(diffOrders);
@@ -49,11 +63,12 @@ public class Controller {
 
             final CountDownLatch latch = new CountDownLatch(1);
             scheduledExecutorService.schedule(createOrderBookTask(latch), 0, TimeUnit.MILLISECONDS);
-            scheduledExecutorService.schedule(createTradesTask(), 0, TimeUnit.MILLISECONDS);
+            scheduledExecutorService.scheduleAtFixedRate(createTradesTask(), 0, 10, TimeUnit.SECONDS);
 
             latch.await();
             scheduledExecutorService.scheduleAtFixedRate(createDiffOrdersScheduler(Operation.BID, bidsListView, getDiffOrderMessageComparator().reversed()), 2000, 100, TimeUnit.MILLISECONDS);
             scheduledExecutorService.scheduleAtFixedRate(createDiffOrdersScheduler(Operation.ASK, asksListView, getDiffOrderMessageComparator()), 2000, 100, TimeUnit.MILLISECONDS);
+            scheduledExecutorService.scheduleAtFixedRate(createDiffOrdersMappingScheduler(), 2000, 100, TimeUnit.MILLISECONDS);
             scheduledExecutorService.scheduleAtFixedRate(createDiffOrdersMappingScheduler(), 2000, 100, TimeUnit.MILLISECONDS);
 
 
@@ -83,22 +98,109 @@ public class Controller {
     private Runnable createTradesTask() {
         return () -> {
             try {
-                String url = "https://api.bitso.com/v3/trades/?book=btc_mxn&limit=" + MAX_DISPLAYABLE_BIDS_AND_ASKS;
-                InputStream inputStream = buildHttpURLConnection(url).getInputStream();
+                TradesMessage tradesMessage = getTradesMessage();
+                List<TradesPayload> trades = tradesMessage.getPayload();
 
-                ObjectMapper mapper = new ObjectMapper();
-                JsonNode responseNode = mapper.readTree(inputStream);
-                TradesMessage tradesMessage = mapper.convertValue(responseNode, TradesMessage.class);
+                addAndAnalyzeLastTrades(trades);
 
-                Platform.runLater(() -> {
-                    lastTradesListView.getItems().addAll(tradesMessage.getPayload().subList(0, MAX_DISPLAYABLE_BIDS_AND_ASKS));
-                });
+                Platform.runLater(() -> addItemsToTradeListView(trades));
 
 
             } catch (IOException e) {
                 e.printStackTrace();
             }
         };
+    }
+
+    private boolean addItemsToTradeListView(List<TradesPayload> trades) {
+        return lastTradesListView.getItems().setAll(trades.subList(0, MAX_DISPLAYABLE_BIDS_AND_ASKS));
+    }
+
+    private void addAndAnalyzeLastTrades(List<TradesPayload> trades) {
+        System.out.println();
+        trades.forEach(lastTrades::add);
+
+        BigDecimal lastPrice = BigDecimal.valueOf(0);
+
+        Integer currentTransactionId;
+        TradesPayload currentTrade = lastTrades.pollFirst();
+        TradesPayload lastTrade = lastTrades.last();
+        while (currentTrade != null) {
+            currentTransactionId = currentTrade.getTid();
+            if ((currentTransactionId - lasteTradeId.intValue()) > 0) {
+
+                BigDecimal price = BigDecimal.valueOf(Double.parseDouble(currentTrade.getPrice()));
+                switch (price.compareTo(lastPrice)) {
+                    case -1:
+                        downtickCount.incrementAndGet();
+                        uptickCount.set(0);
+                        System.out.println("D -> " + downtickCount.get() + " - " + currentTransactionId);
+                        break;
+                    case 0:
+                        System.out.println("Z -> D=" + downtickCount.get() + " - U=" + uptickCount.get() + " - " + currentTransactionId);
+                        break;
+                    case 1:
+                        System.out.println("U -> " + uptickCount.get() + " - " + currentTransactionId);
+                        uptickCount.incrementAndGet();
+                        downtickCount.set(0);
+                        break;
+                }
+
+                if (!firstTrades) {
+                    buyOrSell(currentTrade);
+                }
+
+                lastPrice = price;
+                lasteTradeId.set(currentTransactionId);
+            } else {
+                System.out.println("SKIP: " + currentTransactionId + " - LAST_TRADE - " + lasteTradeId.intValue());
+            }
+
+            currentTrade = lastTrades.pollFirst();
+
+        }
+
+        if (firstTrades) {
+            buyOrSell(lastTrade);
+        }
+
+    }
+
+    private void buyOrSell(TradesPayload tradesPayload) {
+        if (uptickCount.get() >= CONSECUTIVE_UPTICKS) {
+            sellCoins(tradesPayload);
+            firstTrades = false;
+        }
+
+        if (downtickCount.get() >= CONSECUTIVE_DOWNTICKS) {
+            buyCoins(tradesPayload);
+            firstTrades = false;
+        }
+    }
+
+    private void buyCoins(TradesPayload tradesPayload) {
+        executeTransaction(tradesPayload, "YOU BUY");
+
+    }
+
+    private void sellCoins(TradesPayload tradesPayload) {
+        executeTransaction(tradesPayload, "YOU SELL");
+    }
+
+    private void executeTransaction(TradesPayload tradesPayload, String you_sell) {
+        tradesPayload.setAmount("1");
+        tradesPayload.setMaker_side(you_sell);
+        System.out.println(tradesPayload);
+        addItemsToTradeListView(Collections.singletonList(tradesPayload));
+    }
+
+    private TradesMessage getTradesMessage() throws IOException {
+        String url = "https://api.bitso.com/v3/trades/?book=btc_mxn&limit=" + MAX_DISPLAYABLE_BIDS_AND_ASKS;
+        InputStream inputStream = buildHttpURLConnection(url).getInputStream();
+
+        ObjectMapper mapper = new ObjectMapper();
+        JsonNode responseNode = mapper.readTree(inputStream);
+        return mapper.convertValue(responseNode, TradesMessage.class);
     }
 
     private HttpURLConnection buildHttpURLConnection(String url) throws IOException {
@@ -112,7 +214,7 @@ public class Controller {
         return () -> {
             String diffOrder = diffOrders.poll();
             if (diffOrder != null) {
-                mapMessage(diffOrder);
+                processDiffOrderMessage(diffOrder);
             }
         };
     }
@@ -170,12 +272,12 @@ public class Controller {
         scheduledExecutorService.shutdown();
     }
 
-    private void mapMessage(String message) {
+    private void processDiffOrderMessage(String message) {
         try {
             JsonNode messageNode = parseJsonMessage(message);
             if (isValidDiffOrdersMessage(messageNode)) {
-                DiffOrderMessage diffOrderMessage = getDiffOrderMessage(messageNode);
-                if (isBuyMessage(messageNode)) {
+                DiffOrderMessage diffOrderMessage = parseDiffOrderMessage(messageNode);
+                if (diffOrderMessage.isBuy()) {
                     diffOrdersMap.computeIfAbsent(Operation.ASK, k -> new ConcurrentLinkedQueue<>()).add(diffOrderMessage);
                 } else {
                     diffOrdersMap.computeIfAbsent(Operation.BID, k -> new ConcurrentLinkedQueue<>()).add(diffOrderMessage);
@@ -187,18 +289,10 @@ public class Controller {
         }
     }
 
-    private DiffOrderMessage getDiffOrderMessage(JsonNode messageNode) {
-        System.out.println(messageNode.toString());
+    private DiffOrderMessage parseDiffOrderMessage(JsonNode messageNode) {
+//        System.out.println(messageNode.toString());
         ObjectMapper mapper = new ObjectMapper();
         return mapper.convertValue(messageNode, DiffOrderMessage.class);
-    }
-
-    private boolean isBuyMessage(JsonNode messageNode) {
-        if (isValidDiffOrdersMessage(messageNode)) {
-            int t = messageNode.path("payload").get(0).path("t").asInt();
-            return t == 0;
-        }
-        return false;
     }
 
     private static JsonNode parseJsonMessage(String inputStream) throws IOException {

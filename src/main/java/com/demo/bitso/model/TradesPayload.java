@@ -1,6 +1,6 @@
 package com.demo.bitso.model;
 
-public class TradesPayload {
+public class TradesPayload implements Comparable {
     private String book;
     private String created_at;
     private String amount;
@@ -58,7 +58,12 @@ public class TradesPayload {
 
     @Override
     public String toString() {
-        String baseMessage = "[%s - %s] [AMOUNT: %s] [PRICE: %s]";
-        return String.format(baseMessage, getBook(), getMaker_side(), getAmount(), getPrice());
+        String baseMessage = "[%s - %s] [AMOUNT: %s] [PRICE: %s] [TID: %s]";
+        return String.format(baseMessage, getBook(), getMaker_side(), getAmount(), getPrice(), getTid());
+    }
+
+    @Override
+    public int compareTo(Object o) {
+        return getTid() - ((TradesPayload) o).getTid();
     }
 }
